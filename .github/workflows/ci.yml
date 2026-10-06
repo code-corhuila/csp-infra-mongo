@@ -1,0 +1,66 @@
+name: CI
+
+# The instance must start from an empty volume as a single-node replica set, create the login users, accept the
+# init script a second time and keep every domain user inside its own database (Annex J.10).
+
+on:
+  pull_request:
+    branches: [develop, qa, main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  instance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      COMPOSE_PROJECT_NAME: csp-ci
+      MONGO_ADMIN_USER: mongo_admin
+      MONGO_ADMIN_PASSWORD: ci-admin-password
+      MONGO_KEYFILE: Y2ktZGV2ZWxvcG1lbnQta2V5ZmlsZS1ub3QtYS1zZWNyZXQtMDEyMzQ1Njc4OQ==
+      CATALOG_DB_USER: catalog_app
+      CATALOG_DB_PASSWORD: ci-catalog-password
+      WORKER_APP_PASSWORD: ci-worker-password
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the shell scripts
+        run: for f in scripts/*.sh; do sh -n "$f"; done
+
+      - name: Provide the sibling that compose.yml includes
+        # csp-catalog-db is a private sibling this workflow cannot read. The stub only gives the include something to
+        # resolve; the real executor is verified by the rebuild workflow of csp-catalog-db.
+        run: |
+          mkdir -p ../csp-catalog-db/deploy
+          printf 'services:\n  catalog-db-migrate:\n    image: busybox:1.36\n    profiles: [tooling]\n' > ../csp-catalog-db/deploy/compose.yml
+          docker network create platform
+
+      - name: Validate the composition
+        run: docker compose config --quiet
+
+      - name: The instance is a PRIMARY replica set and publishes no port
+        run: |
+          docker compose up -d --wait mongodb
+          # an unpublished port is reported as ":0"; any other host port would mean the instance is open to the host
+          ! docker compose port mongodb 27017 | grep -Eq ':[1-9][0-9]*$'
+          docker compose exec -T mongodb mongosh --quiet -u "$MONGO_ADMIN_USER" -p "$MONGO_ADMIN_PASSWORD" --authenticationDatabase admin --eval "rs.status().set" | grep -x rs0
+
+      - name: The login users exist and stay inside their own database
+        run: |
+          as() { docker compose exec -T mongodb mongosh --quiet "mongodb://$1:$2@localhost:27017/catalog_db?replicaSet=rs0&authSource=catalog_db" --eval "$3"; }
+          as catalog_app "$CATALOG_DB_PASSWORD" "db.createCollection('probe'); db.probe.insertOne({ok: 1})"
+          as catalog_app "$CATALOG_DB_PASSWORD" "db.getSiblingDB('other_db').probe.insertOne({ok: 1})" && { echo "catalog_app wrote outside catalog_db"; exit 1; } || true
+          as worker_app "$WORKER_APP_PASSWORD" "db.probe.insertOne({ok: 1})" && { echo "worker_app can write before any role is granted"; exit 1; } || true
+
+      - name: The init script runs again without error
+        run: docker compose exec -T mongodb mongosh --quiet -u "$MONGO_ADMIN_USER" -p "$MONGO_ADMIN_PASSWORD" --authenticationDatabase admin --file /docker-entrypoint-initdb.d/01-instance.js
+
+      - name: Clean up
+        if: always()
+        run: docker compose down -v

@@ -1,9 +1,74 @@
 # csp-infra-mongo
 
-> Compose/IaC, observability, environments and secrets
+> The single MongoDB instance of the platform: container, volume, replica set, login users and environments
 
 Part of the **Cinesync Platform** distributed system — team `cinesync-platform`, Group 1.
 Governance and documentation live in [`csp-docs`](https://github.com/code-corhuila/csp-docs).
+
+## Purpose
+
+Annex J (J.2, J.3.1 and J.8) gives each engine one infrastructure repository that governs its container and its
+volume. This is the one for MongoDB: it **defines the only MongoDB instance** of each environment, as a
+**single-node replica set `rs0`** (Annex B, rule 6; ADR-016). Every `-db` repository that uses MongoDB keeps its
+migrations and brings only its executor; it defines no database service and no volume. Today that is
+`csp-catalog-db`, which owns the database `catalog_db`.
+
+The PostgreSQL instance and the root composition of the platform live in `csp-infra-postgres` (J.8.1).
+
+```
+compose.yml                    the mongodb service, its volume, and the include of every -db executor
+mongo/init/01-instance.js      login users of the domains; runs once on an empty volume and can be run again
+env/<env>.env.example          one file per environment: dev, qa, main (git-ignored without .example)
+scripts/up.sh · down.sh        bring an environment up (waits for PRIMARY) and stop it, keeping the volume
+.github/workflows/ci.yml       starts the instance from an empty volume and checks users, replica set and re-run
+```
+
+## Repositories are cloned as siblings
+
+The `include` path of `compose.yml` assumes `csp-catalog-db` is cloned next to this repository. A missing sibling
+fails loudly on `up`: nothing is silently skipped.
+
+## Environments
+
+Each environment has its own env file, its own `COMPOSE_PROJECT_NAME` (`csp-dev`, `csp-qa`, `csp-main`), and therefore
+its own container and volume (J.5.1). Only the `.example` file is versioned; the real one carries secrets.
+
+```bash
+cp env/dev.env.example env/dev.env      # then set the administrator, the key file and the passwords
+./scripts/up.sh dev                     # creates the network, starts MongoDB and waits for the replica set
+# from csp-catalog-db, once per environment and again whenever a changeset is added:
+docker compose -f ../csp-catalog-db/deploy/compose.yml --env-file ../csp-infra-mongo/env/dev.env \
+  --profile tooling run --rm catalog-db-migrate
+```
+
+## Users
+
+`mongo/init/01-instance.js` creates the login users from the secrets of the environment. The roles of a domain are
+created by its `-db` (Annex B, rule 5), never here.
+
+| User | Database | Roles at creation | Used by |
+|---|---|---|---|
+| `catalog_app` | `catalog_db` | `dbOwner` on `catalog_db` only | the `catalog-db-migrate` executor and `csp-catalog-api` |
+| `worker_app` | `catalog_db` | none; `csp-catalog-db` grants `catalog_outbox_reader` (ADR-019) | `csp-worker` |
+
+A service never connects with the administrator.
+
+## Rules
+
+- **The volume is the history of the system.** In `qa` and `main` never run `docker compose down -v` and never delete
+  the volume; back the database up before migrating (J.5.4). `down.sh` has no option to remove it.
+- **The instance is created once.** The init script runs only when the volume is empty (J.5.2). To add a domain,
+  add its user to the script and run it once by hand in every environment that already exists (J.5.5):
+
+  ```bash
+  docker compose --env-file env/qa.env exec mongodb sh -c \
+    'mongosh -u "$MONGO_INITDB_ROOT_USERNAME" -p "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin --file /docker-entrypoint-initdb.d/01-instance.js'
+  ```
+- **No secret is versioned.** `env/*.env.example` carries names and placeholders only; the key file of the replica set
+  is written into the container at start from `MONGO_KEYFILE`.
+- **No port is published.** The instance is reachable only from the `platform` network; services use the name
+  `mongodb`, never `localhost`.
+- **No collection, validator or migration lives here:** they belong to each `-db` (Norma 5.2.1).
 
 ## Branching
 
