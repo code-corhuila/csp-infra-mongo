@@ -47,7 +47,8 @@ jobs:
       - name: The instance is a PRIMARY replica set and publishes no port
         run: |
           docker compose up -d --wait mongodb
-          test -z "$(docker compose port mongodb 27017)"
+          # an unpublished port is reported as ":0"; any other host port would mean the instance is open to the host
+          ! docker compose port mongodb 27017 | grep -Eq ':[1-9][0-9]*$'
           docker compose exec -T mongodb mongosh --quiet -u "$MONGO_ADMIN_USER" -p "$MONGO_ADMIN_PASSWORD" --authenticationDatabase admin --eval "rs.status().set" | grep -x rs0
 
       - name: The login users exist and stay inside their own database
