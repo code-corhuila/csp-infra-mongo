@@ -56,7 +56,7 @@ A service never connects with the administrator.
 ## Rules
 
 - **The volume is the history of the system.** In `qa` and `main` never run `docker compose down -v` and never delete
-  the volume; back the database up before migrating (J.5.4). `down.sh` has no option to remove it.
+  the volume; back the database up before migrating (J.5.4, see Backup and restore). `down.sh` has no option to remove it.
 - **The instance is created once.** The init script runs only when the volume is empty (J.5.2). To add a domain,
   add its user to the script and run it once by hand in every environment that already exists (J.5.5):
 
@@ -69,6 +69,41 @@ A service never connects with the administrator.
 - **No port is published.** The instance is reachable only from the `platform` network; services use the name
   `mongodb`, never `localhost`.
 - **No collection, validator or migration lives here:** they belong to each `-db` (Norma 5.2.1).
+
+## Backup and restore
+
+Back the whole instance up before every migration in `qa` and `main` (J.5.4). The dump covers every database **and**
+the logins and roles, which live in `admin`: it is the equivalent of `pg_dump` plus `pg_dumpall --globals-only` in
+`csp-infra-postgres`. Do not use `--db`: it cannot be combined with `--oplog`, and it leaves the logins out.
+
+```bash
+docker compose --env-file env/qa.env exec -T mongodb sh -c \
+  'mongodump -u "$MONGO_INITDB_ROOT_USERNAME" -p "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin --oplog --gzip --archive' \
+  > qa-backup.archive
+```
+
+The archive goes to the standard output, so nothing is left inside the container. It holds the data and the credential
+hashes: keep it outside the repository (`*.archive` is git-ignored) with restricted access. Where it is stored,
+encrypted and for how long is set in
+[`13-operations/backup-and-recovery.md`](https://github.com/code-corhuila/csp-docs/blob/main/13-operations/backup-and-recovery.md).
+
+To restore, start an **empty** instance with `./scripts/up.sh qa` (the init script creates the logins from the env
+file) and restore in two passes:
+
+```bash
+R='mongorestore -u "$MONGO_INITDB_ROOT_USERNAME" -p "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin --gzip --archive'
+docker compose --env-file env/qa.env exec -T mongodb sh -c "$R --drop --nsInclude='admin.*'" < qa-backup.archive
+docker compose --env-file env/qa.env exec -T mongodb sh -c "$R --oplogReplay" < qa-backup.archive
+```
+
+The first pass restores the logins and roles and `--drop` replaces the ones the init script just created; without it
+the roles of the domains (`catalog_outbox_reader`...) do not come back. The second pass restores the data and replays
+the oplog. They cannot be one pass: `--oplogReplay` does not accept `--nsInclude`, and a single pass replays the oplog
+after replacing the logins and fails with `Unauthorized`. Then check that `catalog_app` and `worker_app` log in and
+read, and run the executor of `csp-catalog-db` to confirm that nothing is pending.
+
+Both commands were rehearsed on a disposable instance built from this repository, with data, a domain role and its
+grant: after the restore the data, `catalog_app` and `worker_app` with its role were back, and the oplog replayed.
 
 ## Branching
 
