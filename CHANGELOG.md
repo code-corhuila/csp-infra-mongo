@@ -22,6 +22,12 @@ All notable changes of `csp-infra-mongo` are recorded here. The format follows
 - `.github/workflows/ci.yml`: starts the instance from an empty volume and checks the replica set, the unpublished port,
   the users and the second run of the init script.
 
+### Changed
+
+- README, init script, `compose.yml` and `scripts/up.sh` describe only what exists: `catalog_outbox_reader` is created and
+  granted by the changesets of `csp-catalog-db` when it migrates (it is not part of this repository), "waits for PRIMARY"
+  becomes "waits until it is healthy", and the promotion branch is `qa-promote/...` (ADR-021).
+
 ### Fixed
 
 - The init script leaves an existing user as it is, and the key file hint is printed on one line

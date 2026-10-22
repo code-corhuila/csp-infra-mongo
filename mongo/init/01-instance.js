@@ -27,6 +27,6 @@ ensureUser(catalogDb, required('CATALOG_DB_USER'), required('CATALOG_DB_PASSWORD
   { role: 'dbOwner', db: catalogDb },
 ]);
 
-// The relay of the outbox (ADR-019) logs in with this user. It starts with no role: csp-catalog-db grants it
-// catalog_outbox_reader, which lists find on catalog_db.outbox_event and nothing else.
+// The relay of the outbox (ADR-019) logs in with this user. It starts with no role: when csp-catalog-db migrates,
+// its changesets create catalog_outbox_reader (find on catalog_db.outbox_event and nothing else) and grant it.
 ensureUser(catalogDb, 'worker_app', required('WORKER_APP_PASSWORD'), []);

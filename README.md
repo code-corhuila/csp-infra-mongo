@@ -19,7 +19,7 @@ The PostgreSQL instance and the root composition of the platform live in `csp-in
 compose.yml                    the mongodb service, its volume, and the include of every -db executor
 mongo/init/01-instance.js      login users of the domains; runs once on an empty volume and can be run again
 env/<env>.env.example          one file per environment: dev, qa, main (git-ignored without .example)
-scripts/up.sh · down.sh        bring an environment up (waits for PRIMARY) and stop it, keeping the volume
+scripts/up.sh · down.sh        bring an environment up (waits until it is healthy) and stop it, keeping the volume
 .github/workflows/ci.yml       starts the instance from an empty volume and checks users, replica set and re-run
 ```
 
@@ -35,7 +35,7 @@ its own container and volume (J.5.1). Only the `.example` file is versioned; the
 
 ```bash
 cp env/dev.env.example env/dev.env      # then set the administrator, the key file and the passwords
-./scripts/up.sh dev                     # creates the network, starts MongoDB and waits for the replica set
+./scripts/up.sh dev                     # creates the network, starts MongoDB and waits until it is healthy
 # from csp-catalog-db, once per environment and again whenever a changeset is added:
 docker compose -f ../csp-catalog-db/deploy/compose.yml --env-file ../csp-infra-mongo/env/dev.env \
   --profile tooling run --rm catalog-db-migrate
@@ -49,7 +49,7 @@ created by its `-db` (Annex B, rule 5), never here.
 | User | Database | Roles at creation | Used by |
 |---|---|---|---|
 | `catalog_app` | `catalog_db` | `dbOwner` on `catalog_db` only | the `catalog-db-migrate` executor and `csp-catalog-api` |
-| `worker_app` | `catalog_db` | none; `csp-catalog-db` grants `catalog_outbox_reader` (ADR-019) | `csp-worker` |
+| `worker_app` | `catalog_db` | none at creation; when `csp-catalog-db` migrates, its changesets create `catalog_outbox_reader` and grant it (ADR-019) | `csp-worker` |
 
 A service never connects with the administrator.
 
@@ -112,7 +112,7 @@ branch and leave through a Pull Request.
 
 ```
 develop  <--PR--  feat/... fix/... chore/...
-qa       <--PR--  qa/...
+qa       <--PR--  qa-promote/...
 main     <--PR--  release/...  hotfix/...
 ```
 
