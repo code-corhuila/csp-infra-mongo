@@ -5,6 +5,8 @@ All notable changes of `csp-infra-mongo` are recorded here. The format follows
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-10-22
+
 ### Added
 
 - README: backup and restore of the whole instance (Annex J.5.4). `mongodump --oplog` of the instance, so the logins and
