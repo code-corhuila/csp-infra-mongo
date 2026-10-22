@@ -31,7 +31,7 @@ services:
     volumes:
       - mongo-data:/data/db
       - ./mongo/init:/docker-entrypoint-initdb.d:ro
-    # The check also initiates the replica set the first time, so the instance is healthy only once it is PRIMARY.
+    # The check also initiates the replica set the first time it runs.
     healthcheck:
       test:
         - CMD-SHELL
