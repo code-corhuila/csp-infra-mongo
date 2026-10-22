@@ -1,6 +1,6 @@
 #!/usr/bin/env sh
-# Creates the shared network (idempotent) and brings the MongoDB instance of an environment up, waiting until the
-# replica set is PRIMARY. Usage: ./scripts/up.sh dev|qa|main
+# Creates the shared network (idempotent) and brings the MongoDB instance of an environment up, waiting until it is
+# healthy. Usage: ./scripts/up.sh dev|qa|main
 set -eu
 cd "$(dirname "$0")/.."
 env_name="${1:?usage: up.sh dev|qa|main}"
