@@ -21,11 +21,15 @@ function ensureUser(databaseName, user, password, roles) {
   }
 }
 
-// The catalog domain owns catalog_db and nothing else (ADR-006): its executor creates the collections, the
-// validators and the roles with this user, and csp-catalog-api reads and writes with it.
+// The catalog domain owns catalog_db and nothing else (ADR-006). Its executor, csp-catalog-db, logs in as the migrator,
+// which creates the collections, the validators and the roles (Annex J.5.5), like the migrators of the PostgreSQL side.
 ensureUser(catalogDb, required('CATALOG_DB_USER'), required('CATALOG_DB_PASSWORD'), [
   { role: 'dbOwner', db: catalogDb },
 ]);
+
+// csp-catalog-api logs in with this user. It starts with no role: when csp-catalog-db migrates, its changesets create
+// catalog_writer (find, insert, update and remove on catalog_db) and grant it, so the API never owns the database.
+ensureUser(catalogDb, 'catalog_app', required('CATALOG_APP_PASSWORD'), []);
 
 // The relay of the outbox (ADR-019) logs in with this user. It starts with no role: when csp-catalog-db migrates,
 // its changesets create catalog_outbox_reader (find on catalog_db.outbox_event and nothing else) and grant it.
