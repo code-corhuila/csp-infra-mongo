@@ -5,6 +5,14 @@ All notable changes of `csp-infra-mongo` are recorded here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- The owner of `catalog_db` is the new login `catalog_migrator` (`CATALOG_DB_USER`, used by the executor of `csp-catalog-db`);
+  `catalog_app`, the login of `csp-catalog-api`, is created with no role, and its `catalog_writer` role comes from the
+  changesets of `csp-catalog-db`. New variable `CATALOG_APP_PASSWORD`; README: how to switch an existing environment, with
+  the owner role removed from `catalog_app` as the last step. `ci.yml` checks that `catalog_app` can neither read nor write
+  before the role is granted.
+
 ### Added
 
 - README: backup and restore of the whole instance (Annex J.5.4). `mongodump --oplog` of the instance, so the logins and
