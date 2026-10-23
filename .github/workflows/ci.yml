@@ -24,8 +24,9 @@ jobs:
       MONGO_ADMIN_USER: mongo_admin
       MONGO_ADMIN_PASSWORD: ci-admin-password
       MONGO_KEYFILE: Y2ktZGV2ZWxvcG1lbnQta2V5ZmlsZS1ub3QtYS1zZWNyZXQtMDEyMzQ1Njc4OQ==
-      CATALOG_DB_USER: catalog_app
-      CATALOG_DB_PASSWORD: ci-catalog-password
+      CATALOG_DB_USER: catalog_migrator
+      CATALOG_DB_PASSWORD: ci-migrator-password
+      CATALOG_APP_PASSWORD: ci-catalog-password
       WORKER_APP_PASSWORD: ci-worker-password
     steps:
       - uses: actions/checkout@v4
@@ -54,8 +55,10 @@ jobs:
       - name: The login users exist and stay inside their own database
         run: |
           as() { docker compose exec -T mongodb mongosh --quiet "mongodb://$1:$2@localhost:27017/catalog_db?replicaSet=rs0&authSource=catalog_db" --eval "$3"; }
-          as catalog_app "$CATALOG_DB_PASSWORD" "db.createCollection('probe'); db.probe.insertOne({ok: 1})"
-          as catalog_app "$CATALOG_DB_PASSWORD" "db.getSiblingDB('other_db').probe.insertOne({ok: 1})" && { echo "catalog_app wrote outside catalog_db"; exit 1; } || true
+          as catalog_migrator "$CATALOG_DB_PASSWORD" "db.createCollection('probe'); db.probe.insertOne({ok: 1})"
+          as catalog_migrator "$CATALOG_DB_PASSWORD" "db.getSiblingDB('other_db').probe.insertOne({ok: 1})" && { echo "catalog_migrator wrote outside catalog_db"; exit 1; } || true
+          as catalog_app "$CATALOG_APP_PASSWORD" "db.probe.find().toArray()" && { echo "catalog_app can read before any role is granted"; exit 1; } || true
+          as catalog_app "$CATALOG_APP_PASSWORD" "db.probe.insertOne({ok: 1})" && { echo "catalog_app can write before any role is granted"; exit 1; } || true
           as worker_app "$WORKER_APP_PASSWORD" "db.probe.insertOne({ok: 1})" && { echo "worker_app can write before any role is granted"; exit 1; } || true
 
       - name: The init script runs again without error
