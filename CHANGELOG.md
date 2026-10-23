@@ -5,6 +5,12 @@ All notable changes of `csp-infra-mongo` are recorded here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- `ci.yml` replaces the stub of the executor with the real `csp-catalog-db`, cloned at the branch the pull request targets, and adds a step that migrates the
+  instance with it as `catalog_migrator` and checks that `catalog_app` then reads and writes, cannot create an index, and that `worker_app` reads the outbox
+  (ADR-049, TD-042).
+
 ## [3.0.0] - 2026-10-22
 
 ### Added
