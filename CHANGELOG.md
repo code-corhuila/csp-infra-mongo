@@ -29,6 +29,11 @@ All notable changes of `csp-infra-mongo` are recorded here. The format follows
 - README, init script, `compose.yml` and `scripts/up.sh` describe only what exists: `catalog_outbox_reader` is created and
   granted by the changesets of `csp-catalog-db` when it migrates (it is not part of this repository), "waits for PRIMARY"
   becomes "waits until it is healthy", and the promotion branch is `qa-promote/...` (ADR-021).
+- The owner of `catalog_db` is the new login `catalog_migrator` (`CATALOG_DB_USER`, used by the executor of `csp-catalog-db`);
+  `catalog_app`, the login of `csp-catalog-api`, is created with no role, and its `catalog_writer` role comes from the
+  changesets of `csp-catalog-db`. New variable `CATALOG_APP_PASSWORD`; README: how to switch an existing environment, with
+  the owner role removed from `catalog_app` as the last step. `ci.yml` checks that `catalog_app` can neither read nor write
+  before the role is granted.
 
 ### Fixed
 

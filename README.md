@@ -48,10 +48,32 @@ created by its `-db` (Annex B, rule 5), never here.
 
 | User | Database | Roles at creation | Used by |
 |---|---|---|---|
-| `catalog_app` | `catalog_db` | `dbOwner` on `catalog_db` only | the `catalog-db-migrate` executor and `csp-catalog-api` |
+| `catalog_migrator` (`CATALOG_DB_USER`) | `catalog_db` | `dbOwner` on `catalog_db` only | the `catalog-db-migrate` executor |
+| `catalog_app` | `catalog_db` | none at creation; when `csp-catalog-db` migrates, its changesets create `catalog_writer` (`find`, `insert`, `update` and `remove` on `catalog_db`) and grant it | `csp-catalog-api` |
 | `worker_app` | `catalog_db` | none at creation; when `csp-catalog-db` migrates, its changesets create `catalog_outbox_reader` and grant it (ADR-019) | `csp-worker` |
 
-A service never connects with the administrator.
+A service never connects with the administrator, and the API never connects with the owner of its database.
+
+### An existing environment: switch to the migrator
+
+The init script runs only on an empty volume and leaves an existing user as it is, so an environment that was created
+with `catalog_app` as owner is switched by hand, in this order:
+
+1. Back the instance up (see Backup and restore).
+2. In the env file, set `CATALOG_DB_USER=catalog_migrator` with a new `CATALOG_DB_PASSWORD`, and add
+   `CATALOG_APP_PASSWORD`, above the lines that use them. `catalog_app` already exists, so it keeps the password it has;
+   put that same value in `CATALOG_APP_PASSWORD` so that the file says what the API uses.
+3. Recreate the `mongodb` container so that it reads the new variables, and run the init script by hand (the command of
+   the rule "The instance is created once"): it creates `catalog_migrator` and leaves `catalog_app` as it is.
+4. Run the `catalog-db-migrate` executor, which now logs in as `catalog_migrator`: `catalog-roles-003` and `-004` create
+   `catalog_writer` and grant it to `catalog_app`.
+5. Check that `csp-catalog-api` and `worker_app` still work.
+6. Only then remove the owner role from the API login and write down the result:
+
+   ```bash
+   docker compose --env-file env/qa.env exec mongodb sh -c \
+     'mongosh -u "$MONGO_INITDB_ROOT_USERNAME" -p "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin --eval "db.getSiblingDB(\"catalog_db\").revokeRolesFromUser(\"catalog_app\", [{ role: \"dbOwner\", db: \"catalog_db\" }])"'
+   ```
 
 ## Rules
 
