@@ -1,0 +1,58 @@
+# Root of the MongoDB side of the platform (Annex J). This repository DEFINES the single MongoDB instance of the
+# environment, its volume and its login users; each -db repository only brings the executor that migrates its
+# database into it. The project name comes from COMPOSE_PROJECT_NAME of the env file (csp-dev, csp-qa, csp-main),
+# so every environment has its own container and its own volume (J.5.1).
+include:
+  - path: ../csp-catalog-db/deploy/compose.yml
+  # one line per -db repository whose database lives in this instance
+
+services:
+  mongodb:
+    image: mongo:7.0.14
+    # MongoDB with authentication and a replica set needs a key file. It is written from MONGO_KEYFILE at every
+    # start, never stored in the repository, and the replica set is single-node (rs0) in every environment (Annex B,
+    # rule 6): it is what enables transactions and change streams.
+    entrypoint:
+      - sh
+      - -c
+      - >-
+        printf '%s' "$$MONGO_KEYFILE" > /data/keyfile
+        && chmod 400 /data/keyfile
+        && chown mongodb:mongodb /data/keyfile
+        && exec docker-entrypoint.sh mongod --replSet rs0 --keyFile /data/keyfile --bind_ip_all
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ADMIN_USER:?set MONGO_ADMIN_USER}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ADMIN_PASSWORD:?set MONGO_ADMIN_PASSWORD}
+      MONGO_KEYFILE: ${MONGO_KEYFILE:?set MONGO_KEYFILE}
+      CATALOG_DB_NAME: ${CATALOG_DB_NAME:-catalog_db}
+      CATALOG_DB_USER: ${CATALOG_DB_USER:?set CATALOG_DB_USER}
+      CATALOG_DB_PASSWORD: ${CATALOG_DB_PASSWORD:?set CATALOG_DB_PASSWORD}
+      CATALOG_APP_PASSWORD: ${CATALOG_APP_PASSWORD:?set CATALOG_APP_PASSWORD}
+      WORKER_APP_PASSWORD: ${WORKER_APP_PASSWORD:?set WORKER_APP_PASSWORD}
+    volumes:
+      - mongo-data:/data/db
+      - ./mongo/init:/docker-entrypoint-initdb.d:ro
+    # The check also initiates the replica set the first time it runs.
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          mongosh --quiet -u "$$MONGO_INITDB_ROOT_USERNAME" -p "$$MONGO_INITDB_ROOT_PASSWORD"
+          --authenticationDatabase admin --eval
+          "try { rs.status().myState === 1 } catch (e) { rs.initiate({_id: 'rs0', members: [{_id: 0, host: 'mongodb:27017'}]}); false }"
+          | grep -q true
+      interval: 5s
+      timeout: 10s
+      retries: 20
+      start_period: 20s
+    # expose, not ports: only the gateway is reachable from the host.
+    expose: ["27017"]
+    networks: [platform]
+
+volumes:
+  mongo-data:
+
+networks:
+  platform:
+    name: platform
+    external: true
