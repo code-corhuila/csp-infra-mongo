@@ -7,6 +7,9 @@ All notable changes of `csp-infra-mongo` are recorded here. The format follows
 
 ### Changed
 
+- `ci.yml` replaces the stub of the executor with the real `csp-catalog-db`, cloned at the branch the pull request targets, and adds a step that migrates the
+  instance with it as `catalog_migrator` and checks that `catalog_app` then reads and writes, cannot create an index, and that `worker_app` reads the outbox
+  (ADR-049, TD-042).
 - The owner of `catalog_db` is the new login `catalog_migrator` (`CATALOG_DB_USER`, used by the executor of `csp-catalog-db`);
   `catalog_app`, the login of `csp-catalog-api`, is created with no role, and its `catalog_writer` role comes from the
   changesets of `csp-catalog-db`. New variable `CATALOG_APP_PASSWORD`; README: how to switch an existing environment, with
