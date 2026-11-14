@@ -1,0 +1,78 @@
+name: CI
+
+# The instance must start from an empty volume as a single-node replica set, create the login users, accept the
+# init script a second time, keep every domain user inside its own database (Annex J.10) and let the real executor of
+# csp-catalog-db migrate it as catalog_migrator, after which catalog_app can work and cannot change the structure (ADR-049).
+
+on:
+  pull_request:
+    branches: [develop, qa, main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  instance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      COMPOSE_PROJECT_NAME: csp-ci
+      MONGO_ADMIN_USER: mongo_admin
+      MONGO_ADMIN_PASSWORD: ci-admin-password
+      MONGO_KEYFILE: Y2ktZGV2ZWxvcG1lbnQta2V5ZmlsZS1ub3QtYS1zZWNyZXQtMDEyMzQ1Njc4OQ==
+      CATALOG_DB_USER: catalog_migrator
+      CATALOG_DB_PASSWORD: ci-migrator-password
+      CATALOG_APP_PASSWORD: ci-catalog-password
+      WORKER_APP_PASSWORD: ci-worker-password
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the shell scripts
+        run: for f in scripts/*.sh; do sh -n "$f"; done
+
+      - name: Provide the sibling that compose.yml includes
+        # The executor of csp-catalog-db, at the branch this pull request targets: compose.yml includes its compose file and
+        # the instance is migrated with it below.
+        run: |
+          git clone --depth 1 --branch "${GITHUB_BASE_REF:-develop}" https://github.com/code-corhuila/csp-catalog-db.git ../csp-catalog-db
+          docker network create platform
+
+      - name: Validate the composition
+        run: docker compose config --quiet
+
+      - name: The instance is a PRIMARY replica set and publishes no port
+        run: |
+          docker compose up -d --wait mongodb
+          # an unpublished port is reported as ":0"; any other host port would mean the instance is open to the host
+          ! docker compose port mongodb 27017 | grep -Eq ':[1-9][0-9]*$'
+          docker compose exec -T mongodb mongosh --quiet -u "$MONGO_ADMIN_USER" -p "$MONGO_ADMIN_PASSWORD" --authenticationDatabase admin --eval "rs.status().set" | grep -x rs0
+
+      - name: The login users exist and stay inside their own database
+        run: |
+          as() { docker compose exec -T mongodb mongosh --quiet "mongodb://$1:$2@localhost:27017/catalog_db?replicaSet=rs0&authSource=catalog_db" --eval "$3"; }
+          as catalog_migrator "$CATALOG_DB_PASSWORD" "db.createCollection('probe'); db.probe.insertOne({ok: 1})"
+          as catalog_migrator "$CATALOG_DB_PASSWORD" "db.getSiblingDB('other_db').probe.insertOne({ok: 1})" && { echo "catalog_migrator wrote outside catalog_db"; exit 1; } || true
+          as catalog_app "$CATALOG_APP_PASSWORD" "db.probe.find().toArray()" && { echo "catalog_app can read before any role is granted"; exit 1; } || true
+          as catalog_app "$CATALOG_APP_PASSWORD" "db.probe.insertOne({ok: 1})" && { echo "catalog_app can write before any role is granted"; exit 1; } || true
+          as worker_app "$WORKER_APP_PASSWORD" "db.probe.insertOne({ok: 1})" && { echo "worker_app can write before any role is granted"; exit 1; } || true
+
+      - name: The init script runs again without error
+        run: docker compose exec -T mongodb mongosh --quiet -u "$MONGO_ADMIN_USER" -p "$MONGO_ADMIN_PASSWORD" --authenticationDatabase admin --file /docker-entrypoint-initdb.d/01-instance.js
+
+      - name: The executor of csp-catalog-db migrates as catalog_migrator and catalog_app then works
+        run: |
+          as() { docker compose exec -T mongodb mongosh --quiet "mongodb://$1:$2@localhost:27017/catalog_db?replicaSet=rs0&authSource=catalog_db" --eval "$3"; }
+          docker compose --profile tooling run --rm catalog-db-migrate | tee "$RUNNER_TEMP/migrate.txt"
+          grep -Eq 'Run:[[:space:]]+[1-9]' "$RUNNER_TEMP/migrate.txt" || { echo "the executor applied nothing"; exit 1; }
+          as catalog_app "$CATALOG_APP_PASSWORD" "db.movies.find().limit(1).toArray(); db.outbox_event.updateMany({_id: 'no-such-event'}, {\$set: {probe: 1}})"
+          as catalog_app "$CATALOG_APP_PASSWORD" "db.movies.createIndex({probe: 1})" && { echo "catalog_app created an index"; exit 1; } || true
+          as worker_app "$WORKER_APP_PASSWORD" "db.outbox_event.find().limit(1).toArray()"
+
+      - name: Clean up
+        if: always()
+        run: docker compose down -v
